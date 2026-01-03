@@ -8,13 +8,13 @@ data "aws_security_group" "id_lambda" {
 }
 
 resource "aws_lambda_function" "id_lambda" {
-  function_name = "lambda-identification-auth"
+  function_name = "lambda-identification-client"
   depends_on    = []
   role          = data.aws_iam_role.lambda_exec_role.arn
-  handler       = "tech.buildrun.lambda.Handler::handleRequest"
+  handler       = "tech.buildrun.lambda.HandlerClient::handleRequest"
   runtime       = "java17"
 
-  timeout       = 6
+  timeout       = 10
 
   # Usa o caminho passado via variável
   filename         = var.lambda_jar_path

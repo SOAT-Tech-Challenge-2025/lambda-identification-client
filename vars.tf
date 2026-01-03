@@ -7,7 +7,7 @@ variable "region" {
 variable "tags" {
   default = {
     Environment = "PRD"
-    Project     = "tc-lambda-identification-auth"
+    Project     = "tc-lambda-identification-client"
   }
 }
 
@@ -31,5 +31,5 @@ variable "jwt_secret" {
 variable "lambda_jar_path" {
   description = "Caminho do fat JAR da Lambda"
   type        = string
-  default     = "app/target/lambda-identification-auth.jar"
+  default     = "app/target/lambda-identification-client.jar"
 }
