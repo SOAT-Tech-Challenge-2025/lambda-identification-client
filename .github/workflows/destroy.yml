@@ -1,0 +1,49 @@
+name: Destroy Lambda
+
+on:
+  workflow_dispatch:   # Dispara manualmente
+
+env:
+  AWS_REGION: us-east-1
+
+jobs:
+  destroy-lambda:
+    runs-on: ubuntu-latest
+    environment: Production
+
+    steps:
+      # 1️⃣ Checkout do repositório
+      - uses: actions/checkout@v3
+
+      # 2️⃣ Configurar credenciais AWS
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      # 3️⃣ Verificar se a Lambda existe
+      - name: Check if Lambda exists
+        id: check_lambda
+        run: |
+          if aws lambda get-function --function-name lambda-identification-client --region $AWS_REGION > /dev/null 2>&1; then
+            echo "Lambda exists"
+            echo "exists=true" >> $GITHUB_OUTPUT
+          else
+            echo "Lambda does not exist"
+            echo "exists=false" >> $GITHUB_OUTPUT
+          fi
+
+      # 4️⃣ Deletar Lambda se existir
+      - name: Delete Lambda
+        if: steps.check_lambda.outputs.exists == 'true'
+        run: |
+          echo "Deleting Lambda..."
+          aws lambda delete-function --function-name lambda-identification-client --region $AWS_REGION
+          echo "✅ Lambda deleted successfully"
+
+      # 5️⃣ Mensagem caso a Lambda não exista
+      - name: Lambda not found
+        if: steps.check_lambda.outputs.exists == 'false'
+        run: echo "⚠️ Lambda not found, nothing to delete"
