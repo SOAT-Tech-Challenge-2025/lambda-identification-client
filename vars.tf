@@ -11,23 +11,6 @@ variable "tags" {
   }
 }
 
-# Banco de dados
-variable "db_user" {
-  description = "Usuário do banco de dados"
-  sensitive   = true
-}
-
-variable "db_password" {
-  description = "Senha do banco de dados"
-  sensitive   = true
-}
-
-variable "jwt_secret" {
-  description = "Chave secreta para geração de tokens JWT"
-  type        = string
-  sensitive   = true
-}
-
 variable "lambda_jar_path" {
   description = "Caminho do fat JAR da Lambda"
   type        = string
