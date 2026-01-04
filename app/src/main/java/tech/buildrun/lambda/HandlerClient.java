@@ -5,17 +5,18 @@ import com.amazonaws.services.lambda.runtime.RequestHandler;
 import com.amazonaws.services.lambda.runtime.events.APIGatewayProxyRequestEvent;
 import com.amazonaws.services.lambda.runtime.events.APIGatewayProxyResponseEvent;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import software.amazon.awssdk.services.dynamodb.DynamoDbClient;
+import software.amazon.awssdk.services.dynamodb.model.*;
 
-import java.sql.*;
-import java.util.Map;
+import java.util.*;
 
-public class HandlerClient implements RequestHandler<APIGatewayProxyRequestEvent, APIGatewayProxyResponseEvent> {
+public class HandlerClient implements
+        RequestHandler<APIGatewayProxyRequestEvent, APIGatewayProxyResponseEvent> {
 
-    private static final String DB_URL      = System.getenv("DB_URL");
-    private static final String DB_USER     = System.getenv("DB_USER");
-    private static final String DB_PASSWORD = System.getenv("DB_PASSWORD");
+    private static final String TABLE_NAME = "tc-identification-table";
 
     private final ObjectMapper mapper = new ObjectMapper();
+    private final DynamoDbClient dynamo = DynamoDbClient.create();
 
     @Override
     public APIGatewayProxyResponseEvent handleRequest(
@@ -29,23 +30,17 @@ public class HandlerClient implements RequestHandler<APIGatewayProxyRequestEvent
             context.getLogger().log("METHOD=" + method);
             context.getLogger().log("PATH=" + path);
 
-            Class.forName("org.postgresql.Driver");
-
-            try (Connection conn =
-                         DriverManager.getConnection(DB_URL, DB_USER, DB_PASSWORD)) {
-
-                // POST /clientes
-                if ("POST".equals(method) && "/clientes".equals(path)) {
-                    return criarCliente(request, conn);
-                }
-
-                // GET /clientes/{document}
-                if ("GET".equals(method) && path.startsWith("/clientes/")) {
-                    return consultarCliente(path, conn);
-                }
-
-                return response(404, Map.of("message", "Endpoint não encontrado"));
+            // POST /clientes
+            if ("POST".equals(method) && "/clientes".equals(path)) {
+                return criarCliente(request);
             }
+
+            // GET /clientes/{document}
+            if ("GET".equals(method) && path.startsWith("/clientes/")) {
+                return consultarCliente(path);
+            }
+
+            return response(404, Map.of("message", "Endpoint não encontrado"));
 
         } catch (Exception e) {
             e.printStackTrace();
@@ -56,14 +51,14 @@ public class HandlerClient implements RequestHandler<APIGatewayProxyRequestEvent
     // ===================== CRIAR CLIENTE =====================
 
     private APIGatewayProxyResponseEvent criarCliente(
-            APIGatewayProxyRequestEvent request,
-            Connection conn) throws Exception {
+            APIGatewayProxyRequestEvent request) throws Exception {
 
         if (request.getBody() == null || request.getBody().isBlank()) {
             return response(400, Map.of("message", "Body obrigatório"));
         }
 
-        Map<String, String> body = mapper.readValue(request.getBody(), Map.class);
+        Map<String, String> body =
+                mapper.readValue(request.getBody(), Map.class);
 
         String document = body.get("document");
         String name     = body.get("name");
@@ -75,63 +70,78 @@ public class HandlerClient implements RequestHandler<APIGatewayProxyRequestEvent
             ));
         }
 
-        String sql = """
-                INSERT INTO tb_cliente (nr_documento, nm_cliente, ds_email)
-                VALUES (?, ?, ?)
-                """;
-
-        try (PreparedStatement ps = conn.prepareStatement(sql)) {
-            ps.setString(1, document);
-            ps.setString(2, name);
-            ps.setString(3, email);
-            ps.executeUpdate();
-
-            return response(201, Map.of(
-                    "message", "Cliente criado com sucesso",
-                    "document", document
-            ));
-
-        } catch (SQLException e) {
-            if ("23505".equals(e.getSQLState())) {
-                return response(409, Map.of("message", "Cliente já existe"));
-            }
-            throw e;
+        // 🔍 Verifica se já existe (regra do SQL 23505)
+        if (clienteExistePorDocumento(document)) {
+            return response(409, Map.of("message", "Cliente já existe"));
         }
+
+        Map<String, AttributeValue> item = new HashMap<>();
+        item.put("id", AttributeValue.builder()
+                .s(UUID.randomUUID().toString()).build());
+        item.put("nr_documento", AttributeValue.builder().s(document).build());
+        item.put("nm_cliente", AttributeValue.builder().s(name).build());
+        item.put("ds_email", AttributeValue.builder().s(email).build());
+
+        dynamo.putItem(PutItemRequest.builder()
+                .tableName(TABLE_NAME)
+                .item(item)
+                .build());
+
+        return response(201, Map.of(
+                "message", "Cliente criado com sucesso",
+                "document", document
+        ));
     }
 
     // ===================== CONSULTAR CLIENTE =====================
 
-    private APIGatewayProxyResponseEvent consultarCliente(
-            String path,
-            Connection conn) throws Exception {
+    private APIGatewayProxyResponseEvent consultarCliente(String path)
+            throws Exception {
 
-        // /clientes/123456
         String document = path.substring("/clientes/".length());
 
-        String sql = """
-                SELECT id, nr_documento, nm_cliente, ds_email
-                FROM tb_cliente
-                WHERE nr_documento = ?
-                """;
+        QueryRequest query = QueryRequest.builder()
+                .tableName(TABLE_NAME)
+                .indexName("DocumentoIndex")
+                .keyConditionExpression("nr_documento = :doc")
+                .expressionAttributeValues(Map.of(
+                        ":doc", AttributeValue.builder().s(document).build()
+                ))
+                .limit(1)
+                .build();
 
-        try (PreparedStatement ps = conn.prepareStatement(sql)) {
-            ps.setString(1, document);
-            ResultSet rs = ps.executeQuery();
+        QueryResponse response = dynamo.query(query);
 
-            if (rs.next()) {
-                return response(200, Map.of(
-                        "id", rs.getLong("id"),
-                        "document", rs.getString("nr_documento"),
-                        "name", rs.getString("nm_cliente"),
-                        "email", rs.getString("ds_email")
-                ));
-            }
-
+        if (response.count() == 0) {
             return response(404, Map.of("message", "Cliente não encontrado"));
         }
+
+        Map<String, AttributeValue> item = response.items().get(0);
+
+        return response(200, Map.of(
+                "id", item.get("id").s(),
+                "document", item.get("nr_documento").s(),
+                "name", item.get("nm_cliente").s(),
+                "email", item.get("ds_email").s()
+        ));
     }
 
-    // ===================== RESPONSE =====================
+    // ===================== UTIL =====================
+
+    private boolean clienteExistePorDocumento(String document) {
+
+        QueryRequest query = QueryRequest.builder()
+                .tableName(TABLE_NAME)
+                .indexName("DocumentoIndex")
+                .keyConditionExpression("nr_documento = :doc")
+                .expressionAttributeValues(Map.of(
+                        ":doc", AttributeValue.builder().s(document).build()
+                ))
+                .limit(1)
+                .build();
+
+        return dynamo.query(query).count() > 0;
+    }
 
     private APIGatewayProxyResponseEvent response(int status, Object body) {
         try {
@@ -140,8 +150,10 @@ public class HandlerClient implements RequestHandler<APIGatewayProxyRequestEvent
                     .withHeaders(Map.of(
                             "Content-Type", "application/json",
                             "Access-Control-Allow-Origin", "*",
-                            "Access-Control-Allow-Headers", "Content-Type,Authorization",
-                            "Access-Control-Allow-Methods", "GET,POST,OPTIONS"
+                            "Access-Control-Allow-Headers",
+                            "Content-Type,Authorization",
+                            "Access-Control-Allow-Methods",
+                            "GET,POST,OPTIONS"
                     ))
                     .withBody(mapper.writeValueAsString(body));
         } catch (Exception e) {
