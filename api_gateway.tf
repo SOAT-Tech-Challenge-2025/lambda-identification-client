@@ -3,7 +3,7 @@ resource "aws_apigatewayv2_integration" "lambda_backend" {
   api_id                 = data.aws_apigatewayv2_api.tc_api.id
   integration_type       = "AWS_PROXY"
   integration_uri        = aws_lambda_function.id_lambda.arn
-  payload_format_version = "2.0"
+  payload_format_version = "1.0"
 }
 
 resource "aws_apigatewayv2_route" "clientes_post_route" {
