@@ -1,68 +1,188 @@
-```markdown
-# Lambda Identification Auth
+# Lambda de Clientes – DynamoDB
 
-## Descrição
-Serviço AWS Lambda desenvolvido em Java para autenticação e identificação de clientes. Gerencia operações de consulta e criação de clientes em banco de dados relacional.
+## Visão Geral
 
-## Funcionalidades
-- Consulta de existência de cliente por documento
-- Criação de novo cliente
+Esta AWS Lambda é responsável pelo **cadastro e consulta de clientes**, utilizando o **Amazon DynamoDB** como base de dados e sendo exposta via **API Gateway HTTP API (v2)**.
+
+Ela implementa dois endpoints principais:
+
+* **POST `/clientes`** → Criação de clientes
+* **GET `/clientes/{document}`** → Consulta de cliente pelo documento
+
+A função foi desenvolvida em **Java**, seguindo um modelo simples e direto, ideal para arquiteturas serverless.
+
+---
+
+## Tecnologias Utilizadas
+
+* Java
+* AWS Lambda
+* API Gateway HTTP API (v2)
+* Amazon DynamoDB
+* AWS SDK v2
+* Jackson (JSON)
+
+---
+
+## Recursos AWS Necessários
+
+### DynamoDB
+
+Tabela utilizada:
+
+| Nome da Tabela            | Chave Primária | GSI              |
+| ------------------------- | -------------- | ---------------- |
+| `tc-identification-table` | `id` (String)  | `DocumentoIndex` |
+
+**Global Secondary Index (GSI)**
+
+| Nome             | Partition Key  |
+| ---------------- | -------------- |
+| `DocumentoIndex` | `nr_documento` |
+
+---
+
+## Estrutura dos Dados
+
+Itens armazenados na tabela:
+
+| Atributo       | Descrição                  |
+| -------------- | -------------------------- |
+| `id`           | Identificador único (UUID) |
+| `nr_documento` | Documento do cliente       |
+| `nm_cliente`   | Nome do cliente            |
+| `ds_email`     | Email do cliente           |
+
+---
+
+## Endpoints
+
+### POST `/clientes`
+
+Cria um novo cliente na base de dados.
+
+#### Request
+
+**Headers**
+
 ```
-## Requisições
+Content-Type: application/json
+```
 
-### Consultar Cliente
-Verifica se um cliente existe pelo número do documento.
+**Body**
 
-**Request:**
 ```json
 {
-    "document": "12345678900"
+  "document": "12345678900",
+  "name": "Carlos",
+  "email": "carlos@email.com"
 }
 ```
 
-**Response (cliente existe):**
+#### Validações
+
+* Body obrigatório
+* Campos `document`, `name` e `email` são obrigatórios
+* Não permite clientes duplicados pelo documento
+
+#### Response 201
+
 ```json
 {
-    "message": "Cliente encontrado"
+  "message": "Cliente criado com sucesso",
+  "document": "12345678900"
 }
 ```
 
-**Response (cliente não existe):**
+#### Response 400
+
 ```json
 {
-    "message": "Cliente não encontrado"
+  "message": "document, name e email são obrigatórios"
 }
 ```
 
-### Criar Cliente
-Cadastra um novo cliente no sistema.
+#### Response 409
 
-**Request:**
 ```json
 {
-    "document": "12345678900",
-    "name": "João Silva",
-    "email": "joao@email.com"
+  "message": "Cliente já existe"
 }
 ```
 
-**Response (sucesso):**
+---
+
+### GET `/clientes/{document}`
+
+Consulta um cliente pelo documento.
+
+#### Request
+
+**Path Param**
+
+```
+/clientes/12345678900
+```
+
+#### Response 200
+
 ```json
 {
-    "message": "Cliente criado com sucesso"
+  "id": "550e8400-e29b-41d4-a716-446655440000",
+  "document": "12345678900",
+  "name": "Carlos",
+  "email": "carlos@email.com"
 }
 ```
 
-**Response (erro):**
+#### Response 404
+
 ```json
 {
-  "message": "Erro ao criar cliente"
+  "message": "Cliente não encontrado"
 }
 ```
 
-## Configuração
-A lambda requer as seguintes variáveis de ambiente:
-- `DB_URL`: URL de conexão com o banco de dados
-- `DB_USER`: Usuário do banco de dados
-- `DB_PASSWORD`: Senha do banco de dados
+---
+
+## Códigos de Status HTTP
+
+| Código | Descrição                    |
+| ------ | ---------------------------- |
+| 200    | Sucesso                      |
+| 201    | Criado                       |
+| 400    | Requisição inválida          |
+| 404    | Não encontrado               |
+| 409    | Conflito (cliente duplicado) |
+| 500    | Erro interno                 |
+
+---
+
+## CORS
+
+A Lambda retorna os seguintes headers CORS:
+
 ```
+Access-Control-Allow-Origin: *
+Access-Control-Allow-Headers: Content-Type,Authorization
+Access-Control-Allow-Methods: GET,POST,OPTIONS
+```
+
+---
+
+## Logs
+
+São registrados nos logs:
+
+* Método HTTP
+* Path da requisição
+* Mensagens de erro
+
+Exemplo:
+
+```
+METHOD=POST
+PATH=/clientes
+```
+
+---
