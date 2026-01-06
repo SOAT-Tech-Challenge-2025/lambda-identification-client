@@ -1,80 +1,166 @@
 package tech.buildrun.lambda;
 
-import io.jsonwebtoken.Jwts;
-import io.jsonwebtoken.SignatureAlgorithm;
-import io.jsonwebtoken.security.Keys;
 import com.amazonaws.services.lambda.runtime.Context;
 import com.amazonaws.services.lambda.runtime.RequestHandler;
-import com.amazonaws.services.lambda.runtime.events.APIGatewayProxyRequestEvent;
+import com.amazonaws.services.lambda.runtime.events.APIGatewayV2HTTPEvent;
 import com.amazonaws.services.lambda.runtime.events.APIGatewayProxyResponseEvent;
+
 import com.fasterxml.jackson.databind.ObjectMapper;
+import software.amazon.awssdk.services.dynamodb.DynamoDbClient;
+import software.amazon.awssdk.services.dynamodb.model.*;
 
-import java.nio.charset.StandardCharsets;
-import java.util.Date;
-import java.util.Map;
-import javax.crypto.SecretKey;
+import java.util.*;
 
-public class HandlerClient implements RequestHandler<APIGatewayProxyRequestEvent, APIGatewayProxyResponseEvent> {
+public class HandlerClient implements
+        RequestHandler<APIGatewayV2HTTPEvent, APIGatewayProxyResponseEvent> {
 
-    private static final String JWT_SECRET = System.getenv("JWT_SECRET");
-    private static final long EXPIRATION_TIME = 3600_000; // 1 hora
+    private static final String TABLE_NAME = "tc-identification-table";
 
     private final ObjectMapper mapper = new ObjectMapper();
+    private final DynamoDbClient dynamo = DynamoDbClient.create();
 
     @Override
     public APIGatewayProxyResponseEvent handleRequest(
-            APIGatewayProxyRequestEvent request,
+            APIGatewayV2HTTPEvent request,
             Context context) {
+
         try {
-            if (request.getBody() == null || request.getBody().isBlank()) {
-                return response(400, Map.of("message", "Body obrigatório"));
+            String path = request.getRawPath();
+            String method = request.getRequestContext()
+                    .getHttp()
+                    .getMethod();
+
+            context.getLogger().log("METHOD=" + method);
+            context.getLogger().log("PATH=" + path);
+
+            // POST /clientes
+            if ("POST".equalsIgnoreCase(method) && "/clientes".equals(path)) {
+                return criarCliente(request);
             }
 
-            Map<String, String> body =
-                    mapper.readValue(request.getBody(), Map.class);
-
-            String username = body.get("user");
-
-            if (username == null) {
-                return response(400, Map.of("message", "user obrigatórios"));
+            // GET /clientes/{document}
+            if ("GET".equalsIgnoreCase(method) && path.startsWith("/clientes/")) {
+                return consultarCliente(path);
             }
 
-            String token = gerarToken(username);
-
-            return response(200, Map.of("token", token));
+            return response(404, Map.of("message", "Endpoint não encontrado"));
 
         } catch (Exception e) {
-            try {
-                return response(500, Map.of("message", "Erro ao gerar token"));
-            } catch (Exception ex) {
-                throw new RuntimeException(ex);
-            }
+            context.getLogger().log("ERRO: " + e.getMessage());
+            return response(500, Map.of("message", "Erro interno"));
         }
     }
 
-    private String gerarToken(String username) {
+    /* ===================== CRIAR CLIENTE ===================== */
 
-        if (JWT_SECRET == null || JWT_SECRET.length() < 32) {
-            throw new IllegalStateException("JWT_SECRET deve ter no mínimo 32 caracteres");
+    private APIGatewayProxyResponseEvent criarCliente(
+            APIGatewayV2HTTPEvent request) throws Exception {
+
+        if (request.getBody() == null || request.getBody().isBlank()) {
+            return response(400, Map.of("message", "Body obrigatório"));
         }
 
-        SecretKey key = Keys.hmacShaKeyFor(
-                JWT_SECRET.getBytes(StandardCharsets.UTF_8)
-        );
+        Map<String, String> body =
+                mapper.readValue(request.getBody(), Map.class);
 
-        return Jwts.builder()
-                .setSubject(username)
-                .claim("role", "USER")
-                .setIssuedAt(new Date())
-                .setExpiration(new Date(System.currentTimeMillis() + EXPIRATION_TIME))
-                .signWith(key, SignatureAlgorithm.HS256)
-                .compact();
+        String document = body.get("document");
+        String name = body.get("name");
+        String email = body.get("email");
+
+        if (document == null || name == null || email == null) {
+            return response(400, Map.of(
+                    "message", "document, name e email são obrigatórios"
+            ));
+        }
+
+        if (clienteExistePorDocumento(document)) {
+            return response(409, Map.of("message", "Cliente já existe"));
+        }
+
+        Map<String, AttributeValue> item = new HashMap<>();
+        item.put("id", AttributeValue.builder()
+                .s(UUID.randomUUID().toString()).build());
+        item.put("nr_documento", AttributeValue.builder().s(document).build());
+        item.put("nm_cliente", AttributeValue.builder().s(name).build());
+        item.put("ds_email", AttributeValue.builder().s(email).build());
+
+        dynamo.putItem(PutItemRequest.builder()
+                .tableName(TABLE_NAME)
+                .item(item)
+                .build());
+
+        return response(201, Map.of(
+                "message", "Cliente criado com sucesso",
+                "document", document
+        ));
     }
 
-    private APIGatewayProxyResponseEvent response(int status, Object body) throws Exception {
-        return new APIGatewayProxyResponseEvent()
-                .withStatusCode(status)
-                .withHeaders(Map.of("Content-Type", "application/json"))
-                .withBody(mapper.writeValueAsString(body));
+    /* ===================== CONSULTAR CLIENTE ===================== */
+
+    private APIGatewayProxyResponseEvent consultarCliente(String path)
+            throws Exception {
+
+        // /clientes/123456
+        String document = path.substring("/clientes/".length());
+
+        QueryRequest query = QueryRequest.builder()
+                .tableName(TABLE_NAME)
+                .indexName("DocumentoIndex")
+                .keyConditionExpression("nr_documento = :doc")
+                .expressionAttributeValues(Map.of(
+                        ":doc", AttributeValue.builder().s(document).build()
+                ))
+                .limit(1)
+                .build();
+
+        QueryResponse result = dynamo.query(query);
+
+        if (result.count() == 0) {
+            return response(404, Map.of("message", "Cliente não encontrado"));
+        }
+
+        Map<String, AttributeValue> item = result.items().get(0);
+
+        return response(200, Map.of(
+                "id", item.get("id").s(),
+                "document", item.get("nr_documento").s(),
+                "name", item.get("nm_cliente").s(),
+                "email", item.get("ds_email").s()
+        ));
+    }
+
+    /* ===================== UTIL ===================== */
+
+    private boolean clienteExistePorDocumento(String document) {
+
+        QueryRequest query = QueryRequest.builder()
+                .tableName(TABLE_NAME)
+                .indexName("DocumentoIndex")
+                .keyConditionExpression("nr_documento = :doc")
+                .expressionAttributeValues(Map.of(
+                        ":doc", AttributeValue.builder().s(document).build()
+                ))
+                .limit(1)
+                .build();
+
+        return dynamo.query(query).count() > 0;
+    }
+
+    private APIGatewayProxyResponseEvent response(int status, Object body) {
+        try {
+            return new APIGatewayProxyResponseEvent()
+                    .withStatusCode(status)
+                    .withHeaders(Map.of(
+                            "Content-Type", "application/json",
+                            "Access-Control-Allow-Origin", "*",
+                            "Access-Control-Allow-Headers", "Content-Type,Authorization",
+                            "Access-Control-Allow-Methods", "GET,POST,OPTIONS"
+                    ))
+                    .withBody(mapper.writeValueAsString(body));
+        } catch (Exception e) {
+            return new APIGatewayProxyResponseEvent()
+                    .withStatusCode(500)
+                    .withBody("{\"message\":\"Erro ao serializar resposta\"}");
+        }
     }
 }

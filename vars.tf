@@ -7,29 +7,12 @@ variable "region" {
 variable "tags" {
   default = {
     Environment = "PRD"
-    Project     = "tc-lambda-identification-auth"
+    Project     = "tc-lambda-identification-client"
   }
-}
-
-# Banco de dados
-variable "db_user" {
-  description = "Usuário do banco de dados"
-  sensitive   = true
-}
-
-variable "db_password" {
-  description = "Senha do banco de dados"
-  sensitive   = true
-}
-
-variable "jwt_secret" {
-  description = "Chave secreta para geração de tokens JWT"
-  type        = string
-  sensitive   = true
 }
 
 variable "lambda_jar_path" {
   description = "Caminho do fat JAR da Lambda"
   type        = string
-  default     = "app/target/lambda-identification-auth.jar"
+  default     = "app/target/lambda-identification-client.jar"
 }
