@@ -2,8 +2,9 @@ package tech.buildrun.lambda;
 
 import com.amazonaws.services.lambda.runtime.Context;
 import com.amazonaws.services.lambda.runtime.RequestHandler;
-import com.amazonaws.services.lambda.runtime.events.APIGatewayProxyRequestEvent;
+import com.amazonaws.services.lambda.runtime.events.APIGatewayV2HTTPEvent;
 import com.amazonaws.services.lambda.runtime.events.APIGatewayProxyResponseEvent;
+
 import com.fasterxml.jackson.databind.ObjectMapper;
 import software.amazon.awssdk.services.dynamodb.DynamoDbClient;
 import software.amazon.awssdk.services.dynamodb.model.*;
@@ -11,7 +12,7 @@ import software.amazon.awssdk.services.dynamodb.model.*;
 import java.util.*;
 
 public class HandlerClient implements
-        RequestHandler<APIGatewayProxyRequestEvent, APIGatewayProxyResponseEvent> {
+        RequestHandler<APIGatewayV2HTTPEvent, APIGatewayProxyResponseEvent> {
 
     private static final String TABLE_NAME = "tc-identification-table";
 
@@ -20,38 +21,40 @@ public class HandlerClient implements
 
     @Override
     public APIGatewayProxyResponseEvent handleRequest(
-            APIGatewayProxyRequestEvent request,
+            APIGatewayV2HTTPEvent request,
             Context context) {
 
         try {
-            String method = request.getHttpMethod();
-            String path   = request.getPath();
+            String path = request.getRawPath();
+            String method = request.getRequestContext()
+                    .getHttp()
+                    .getMethod();
 
             context.getLogger().log("METHOD=" + method);
             context.getLogger().log("PATH=" + path);
 
             // POST /clientes
-            if ("POST".equals(method) && "/clientes".equals(path)) {
+            if ("POST".equalsIgnoreCase(method) && "/clientes".equals(path)) {
                 return criarCliente(request);
             }
 
             // GET /clientes/{document}
-            if ("GET".equals(method) && path.startsWith("/clientes/")) {
+            if ("GET".equalsIgnoreCase(method) && path.startsWith("/clientes/")) {
                 return consultarCliente(path);
             }
 
             return response(404, Map.of("message", "Endpoint não encontrado"));
 
         } catch (Exception e) {
-            e.printStackTrace();
+            context.getLogger().log("ERRO: " + e.getMessage());
             return response(500, Map.of("message", "Erro interno"));
         }
     }
 
-    // ===================== CRIAR CLIENTE =====================
+    /* ===================== CRIAR CLIENTE ===================== */
 
     private APIGatewayProxyResponseEvent criarCliente(
-            APIGatewayProxyRequestEvent request) throws Exception {
+            APIGatewayV2HTTPEvent request) throws Exception {
 
         if (request.getBody() == null || request.getBody().isBlank()) {
             return response(400, Map.of("message", "Body obrigatório"));
@@ -61,8 +64,8 @@ public class HandlerClient implements
                 mapper.readValue(request.getBody(), Map.class);
 
         String document = body.get("document");
-        String name     = body.get("name");
-        String email    = body.get("email");
+        String name = body.get("name");
+        String email = body.get("email");
 
         if (document == null || name == null || email == null) {
             return response(400, Map.of(
@@ -70,7 +73,6 @@ public class HandlerClient implements
             ));
         }
 
-        // 🔍 Verifica se já existe (regra do SQL 23505)
         if (clienteExistePorDocumento(document)) {
             return response(409, Map.of("message", "Cliente já existe"));
         }
@@ -93,11 +95,12 @@ public class HandlerClient implements
         ));
     }
 
-    // ===================== CONSULTAR CLIENTE =====================
+    /* ===================== CONSULTAR CLIENTE ===================== */
 
     private APIGatewayProxyResponseEvent consultarCliente(String path)
             throws Exception {
 
+        // /clientes/123456
         String document = path.substring("/clientes/".length());
 
         QueryRequest query = QueryRequest.builder()
@@ -110,13 +113,13 @@ public class HandlerClient implements
                 .limit(1)
                 .build();
 
-        QueryResponse response = dynamo.query(query);
+        QueryResponse result = dynamo.query(query);
 
-        if (response.count() == 0) {
+        if (result.count() == 0) {
             return response(404, Map.of("message", "Cliente não encontrado"));
         }
 
-        Map<String, AttributeValue> item = response.items().get(0);
+        Map<String, AttributeValue> item = result.items().get(0);
 
         return response(200, Map.of(
                 "id", item.get("id").s(),
@@ -126,7 +129,7 @@ public class HandlerClient implements
         ));
     }
 
-    // ===================== UTIL =====================
+    /* ===================== UTIL ===================== */
 
     private boolean clienteExistePorDocumento(String document) {
 
@@ -150,10 +153,8 @@ public class HandlerClient implements
                     .withHeaders(Map.of(
                             "Content-Type", "application/json",
                             "Access-Control-Allow-Origin", "*",
-                            "Access-Control-Allow-Headers",
-                            "Content-Type,Authorization",
-                            "Access-Control-Allow-Methods",
-                            "GET,POST,OPTIONS"
+                            "Access-Control-Allow-Headers", "Content-Type,Authorization",
+                            "Access-Control-Allow-Methods", "GET,POST,OPTIONS"
                     ))
                     .withBody(mapper.writeValueAsString(body));
         } catch (Exception e) {
