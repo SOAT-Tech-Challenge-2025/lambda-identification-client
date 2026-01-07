@@ -17,9 +17,32 @@
         <aws-lambda-java-core.version>1.2.3</aws-lambda-java-core.version>
         <aws-lambda-java-events.version>3.11.3</aws-lambda-java-events.version>
         <sonar.organization>soat-tech-challenge-2025-1</sonar.organization>
+        <sonar.coverage.exclusions>**/lambda/**</sonar.coverage.exclusions>
     </properties>
 
     <dependencies>
+        <!-- JUnit 5 -->
+        <dependency>
+            <groupId>org.junit.jupiter</groupId>
+            <artifactId>junit-jupiter</artifactId>
+            <version>5.10.2</version>
+            <scope>test</scope>
+        </dependency>
+
+        <!-- Mockito -->
+        <dependency>
+            <groupId>org.mockito</groupId>
+            <artifactId>mockito-core</artifactId>
+            <version>5.11.0</version>
+            <scope>test</scope>
+        </dependency>
+
+        <dependency>
+            <groupId>org.mockito</groupId>
+            <artifactId>mockito-junit-jupiter</artifactId>
+            <version>5.11.0</version>
+            <scope>test</scope>
+        </dependency>
         <!-- AWS Lambda Core -->
         <dependency>
             <groupId>com.amazonaws</groupId>
